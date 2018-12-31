@@ -1,5 +1,6 @@
 package local.teamc.sensortagsample;
 
+import android.bluetooth.BluetoothDevice;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.view.View;
@@ -10,14 +11,14 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.BluetoothLeScanner;
-import java.text.ParsePosition;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothProfile;
 import java.util.Date;
 import java.util.List;
 import android.Manifest;
 import java.text.SimpleDateFormat;
 import android.content.pm.PackageManager;
-
-import org.w3c.dom.Text;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -28,8 +29,10 @@ public class MainActivity extends AppCompatActivity {
     BluetoothManager _bluetoothManager;
     BluetoothAdapter _bluetoothAdapter;
     BluetoothLeScanner _bleScanner;
+    BluetoothGatt _bluetoothGatt;
+    boolean _bleDeviceConnected = false;
 
-    String[] _statusHistory = new String[3+1]; // 現在の状態+3履歴
+    String[] _statusHistory = new String[3 + 1]; // 現在の状態+3履歴
     int _statusCurrentIndex = -1;
 
     //Bluetooth scanのタイムアウト時間(ms)
@@ -57,42 +60,51 @@ public class MainActivity extends AppCompatActivity {
 
         _handler = new Handler();
 
-        _textViewStatusValue = (TextView)findViewById(R.id.textview_status_value);
-        _textViewButtonValue = (TextView)findViewById(R.id.textview_button_value);
-        _textViewHistory[0] = (TextView)findViewById(R.id.textview_history1);
-        _textViewHistory[1] = (TextView)findViewById(R.id.textview_history2);
-        _textViewHistory[2] = (TextView)findViewById(R.id.textview_history3);
+        _textViewStatusValue = (TextView) findViewById(R.id.textview_status_value);
+        _textViewButtonValue = (TextView) findViewById(R.id.textview_button_value);
+        _textViewHistory[0] = (TextView) findViewById(R.id.textview_history1);
+        _textViewHistory[1] = (TextView) findViewById(R.id.textview_history2);
+        _textViewHistory[2] = (TextView) findViewById(R.id.textview_history3);
 
-        _bluetoothManager = (BluetoothManager)getSystemService(BLUETOOTH_SERVICE);
+        _bluetoothManager = (BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
         _bluetoothAdapter = _bluetoothManager.getAdapter();
         _bleScanner = _bluetoothAdapter.getBluetoothLeScanner();
 
-        findViewById(R.id.button_connect).setOnClickListener(new View.OnClickListener(){
+        findViewById(R.id.button_connect).setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View v){
+            public void onClick(View v) {
                 showStatus("connectボタンが押されました");
                 scan();
             }
         });
+        findViewById(R.id.button_disconnect).setOnClickListener(
+                new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        showStatus("disconnectボタンが押されました");
+                        disconnect();
+                    }
+                }
+        );
 
         initializeHistory();
     }
 
-    private void initializeHistory(){
-        for(int i=0; i<_statusHistory.length; i++){
+    private void initializeHistory() {
+        for (int i = 0; i < _statusHistory.length; i++) {
             _statusHistory[i] = null;
         }
         _statusCurrentIndex = -1;
 
-        for(int i=0; i<_textViewHistory.length; i++){
+        for (int i = 0; i < _textViewHistory.length; i++) {
             _textViewHistory[i].setText("");
         }
     }
 
-    private void showStatus(String message){
+    private void showStatus(String message) {
         _textViewStatusValue.setText(message);
         _statusCurrentIndex++;
-        if(_statusCurrentIndex >= _statusHistory.length){
+        if (_statusCurrentIndex >= _statusHistory.length) {
             _statusCurrentIndex = 0;
         }
 
@@ -102,19 +114,20 @@ public class MainActivity extends AppCompatActivity {
         _handler.post(new Runnable() {
             @Override
             public void run() {
-                for(int i=0; i<_textViewHistory.length; i++){
+                for (int i = 0; i < _textViewHistory.length; i++) {
                     int statusHistoryIndex = _statusCurrentIndex - 1 - i;
-                    if(statusHistoryIndex < 0){
+                    if (statusHistoryIndex < 0) {
                         statusHistoryIndex += _statusHistory.length;
                     }
-                    if(_statusHistory[statusHistoryIndex] != null){
+                    if (_statusHistory[statusHistoryIndex] != null) {
                         _textViewHistory[i].setText(_statusHistory[statusHistoryIndex]);
                     }
                 }
             }
         });
     }
-    private void scan(){
+
+    private void scan() {
         _bleScanStopping = false;
 
         //SCAN_PERIODで指定した時間が過ぎたらscanを停止する
@@ -123,7 +136,9 @@ public class MainActivity extends AppCompatActivity {
             public void run() {
                 _bleScanStopping = true;
                 _bleScanner.stopScan(_scanCallback);
-            };
+            }
+
+            ;
         }, SCAN_PERIOD);
 
         _bleScanner.startScan(_scanCallback);
@@ -134,7 +149,7 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onScanResult(int callbackType, ScanResult result) {
             super.onScanResult(callbackType, result);
-            if(_bleScanStopping){
+            if (_bleScanStopping) {
                 _handler.post(new Runnable() {
                     @Override
                     public void run() {
@@ -151,8 +166,7 @@ public class MainActivity extends AppCompatActivity {
                     _bleScanStopping = true;
                     _bleScanner.stopScan(_scanCallback);
 
-                    //connect
-//                        connect(result.getDevice());
+                    connect(result.getDevice());
                 }
             }
         }
@@ -167,4 +181,35 @@ public class MainActivity extends AppCompatActivity {
             super.onScanFailed(errorCode);
         }
     };
+
+    private void connect(BluetoothDevice device) {
+        _bluetoothGatt = device.connectGatt(this, false, _gattCallback);
+
+    }
+
+    private BluetoothGattCallback _gattCallback = new BluetoothGattCallback() {
+        @Override
+        public void onConnectionStateChange(BluetoothGatt gatt, int status,
+                                            int newState) {
+            super.onConnectionStateChange(gatt, status, newState);
+
+            // 接続成功
+            if (newState == BluetoothProfile.STATE_CONNECTED){
+                _bleDeviceConnected = true;
+                showStatus("接続成功");
+//                discoverService(gatt);
+            }else if (newState == BluetoothProfile.STATE_DISCONNECTED){
+                _bleDeviceConnected = false;
+                showStatus("接続が切断されました");
+            }
+
+        }
+    };
+
+    private void disconnect(){
+        if(_bleDeviceConnected){
+            _bluetoothGatt.disconnect();
+        }
+    }
 }
+
