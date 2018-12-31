@@ -13,14 +13,23 @@ import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothGattDescriptor;
+import android.bluetooth.BluetoothGattService;
+import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothProfile;
 import java.util.Date;
 import java.util.List;
 import android.Manifest;
 import java.text.SimpleDateFormat;
+import java.util.UUID;
+
 import android.content.pm.PackageManager;
 
 public class MainActivity extends AppCompatActivity {
+
+    final UUID UUID_CLIENT_CHARACTERISTIC_CONFIG = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+    final UUID UUID_KEY_SERV = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
+    final UUID UUID_KEY_DATA = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
 
     TextView _textViewStatusValue;
     TextView _textViewButtonValue;
@@ -197,12 +206,52 @@ public class MainActivity extends AppCompatActivity {
             if (newState == BluetoothProfile.STATE_CONNECTED){
                 _bleDeviceConnected = true;
                 showStatus("接続成功");
-//                discoverService(gatt);
+
+                discoverService(gatt);
+
             }else if (newState == BluetoothProfile.STATE_DISCONNECTED){
                 _bleDeviceConnected = false;
                 showStatus("接続が切断されました");
             }
 
+        }
+
+        @Override
+        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+            super.onServicesDiscovered(gatt, status);
+
+            if(status == BluetoothGatt.GATT_SUCCESS) {
+                BluetoothGattService buttonService = gatt.getService(UUID_KEY_SERV);
+                if(buttonService != null){
+                    BluetoothGattCharacteristic buttonChar = buttonService.getCharacteristic(UUID_KEY_DATA);
+                    if(buttonChar != null){
+                        // Notification を要求する
+                        boolean registered = gatt.setCharacteristicNotification(buttonChar, true);
+                        // Characteristic の Notification 有効化
+                        BluetoothGattDescriptor descriptor = buttonChar.getDescriptor(UUID_CLIENT_CHARACTERISTIC_CONFIG);
+                        descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                        gatt.writeDescriptor(descriptor);
+                        showStatus("KeyのNotificationを有効にしました");
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt,
+                                            BluetoothGattCharacteristic characteristic) {
+            if (UUID_KEY_DATA.equals(characteristic.getUuid())) {
+                // SensorTag からは 2bit の値が渡される
+                Byte value = characteristic.getValue()[0];
+                final boolean left = (0 < (value & 0x02));
+                final boolean right = (0 < (value & 0x01));
+                _handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        _textViewButtonValue.setText("左:" + left + ", 右:" + right);
+                    }
+                });
+            }
         }
     };
 
@@ -211,5 +260,10 @@ public class MainActivity extends AppCompatActivity {
             _bluetoothGatt.disconnect();
         }
     }
+
+    private void discoverService(BluetoothGatt gatt){
+        gatt.discoverServices();
+    }
+
 }
 
