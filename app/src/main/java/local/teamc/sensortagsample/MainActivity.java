@@ -39,11 +39,16 @@ public class MainActivity extends AppCompatActivity {
     final UUID UUID_OPT_DATA = UUID.fromString("f000aa71-0451-4000-b000-000000000000");
     final UUID UUID_OPT_CONF = UUID.fromString("f000aa72-0451-4000-b000-000000000000"); // 0: disable, 1: enable
     final UUID UUID_OPT_PERI = UUID.fromString("f000aa73-0451-4000-b000-000000000000"); // Period in tens of milliseconds
-    final UUID UUID_OPT_NTFY = UUID.fromString("f0002902-0451-4000-b000-000000000000"); // Notify
+
+    final UUID UUID_MOV_SERV = UUID.fromString("f000aa80-0451-4000-b000-000000000000");
+    final UUID UUID_MOV_DATA = UUID.fromString("f000aa81-0451-4000-b000-000000000000");
+    final UUID UUID_MOV_CONF = UUID.fromString("f000aa82-0451-4000-b000-000000000000"); // 0: disable, bit 0: enable x, bit 1: enable y, bit 2: enable z
+    final UUID UUID_MOV_PERI = UUID.fromString("f000aa83-0451-4000-b000-000000000000"); // Period in tens of milliseconds
 
     TextView _textViewStatusValue;
     TextView _textViewButtonValue;
     TextView _textViewOpticalValue;
+    TextView _textViewMovementValue;
     TextView[] _textViewHistory = new TextView[3];
     Handler _handler;
     BluetoothManager _bluetoothManager;
@@ -53,6 +58,8 @@ public class MainActivity extends AppCompatActivity {
     boolean _bleDeviceConnected = false;
 
     double opticalValue = 0;
+    double accX,accY,accZ;
+
 
     String[] _statusHistory = new String[3 + 1]; // 現在の状態+3履歴
     int _statusCurrentIndex = -1;
@@ -85,6 +92,7 @@ public class MainActivity extends AppCompatActivity {
         _textViewStatusValue = (TextView) findViewById(R.id.textview_status_value);
         _textViewButtonValue = (TextView) findViewById(R.id.textview_button_value);
         _textViewOpticalValue = (TextView) findViewById(R.id.textview_optical_value);
+        _textViewMovementValue = (TextView) findViewById(R.id.textview_movement_value);
         _textViewHistory[0] = (TextView) findViewById(R.id.textview_history1);
         _textViewHistory[1] = (TextView) findViewById(R.id.textview_history2);
         _textViewHistory[2] = (TextView) findViewById(R.id.textview_history3);
@@ -264,6 +272,21 @@ public class MainActivity extends AppCompatActivity {
         public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status){
             if(descriptor.getCharacteristic().getUuid().equals(UUID_KEY_DATA)){
                 showStatus("KeyのNotificationを有効にしました");
+            }else if(descriptor.getCharacteristic().getUuid().equals(UUID_OPT_DATA)){
+                showStatus("OpticalのNotificationを有効にしました");
+
+                showStatus("MOVを有効化します");
+                BluetoothGattService movingService = gatt.getService(UUID_MOV_SERV);
+                if (movingService != null) {
+                    BluetoothGattCharacteristic movingConfChar = movingService.getCharacteristic(UUID_MOV_CONF);
+                    if(movingConfChar != null){
+                        byte[] val = new byte[]{(byte)0x7f,(byte)0xff};
+                        movingConfChar.setValue(val);
+                        gatt.writeCharacteristic(movingConfChar);
+                    }
+                }
+            }else if(descriptor.getCharacteristic().getUuid().equals(UUID_MOV_DATA)){
+                showStatus("MovementのNoticationを有効にしました");
             }
         }
 
@@ -301,6 +324,23 @@ public class MainActivity extends AppCompatActivity {
                         _textViewOpticalValue.setText((opticalValue/100.0f) +" lux");
                     }
                 });
+            }else if(UUID_MOV_DATA.equals(characteristic.getUuid())){
+                byte[] value = characteristic.getValue();
+                {
+                    // Range 8G
+                    final float SCALE = (float) 4096.0;
+
+                    accX = ((value[7]<<8) + value[6])/SCALE * -1;
+                    accY = ((value[9]<<8) + value[8])/SCALE;
+                    accZ = ((value[11]<<8) + value[10])/SCALE * -1;
+
+                    _handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            _textViewMovementValue.setText(String.format("accX:%.3f, accY:%.3f, accZ:%.3f",accX,accY,accZ));
+                        }
+                    });
+                }
             }
 
         }
@@ -309,12 +349,6 @@ public class MainActivity extends AppCompatActivity {
         public void onCharacteristicRead(BluetoothGatt gatt,
                                          BluetoothGattCharacteristic characteristic,
                                          int status) {
-
-            BluetoothGattService opticalService = gatt.getService(UUID_OPT_SERV);
-            BluetoothGattCharacteristic opticalDataChar = opticalService.getCharacteristic(UUID_OPT_DATA);
-            if (opticalDataChar != null) {
-                gatt.readCharacteristic(opticalDataChar);
-            }
         }
 
         private Integer shortUnsignedAtOffset(byte[] c, int offset) {
@@ -343,6 +377,20 @@ public class MainActivity extends AppCompatActivity {
                     descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                     gatt.writeDescriptor(descriptor);
                 }
+            }else if(characteristic.getUuid().equals(UUID_MOV_CONF)){
+                showStatus("MOVを有効化しました");
+
+                // Notification を要求する
+                BluetoothGattService movementService = gatt.getService(UUID_MOV_SERV);
+                BluetoothGattCharacteristic movementDataChar = movementService.getCharacteristic(UUID_MOV_DATA);
+                boolean registered = gatt.setCharacteristicNotification(movementDataChar, true);
+                if(registered){
+                    // Characteristic の Notification 有効化
+                    BluetoothGattDescriptor descriptor = movementDataChar.getDescriptor(UUID_CLIENT_CHARACTERISTIC_CONFIG);
+                    descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                    gatt.writeDescriptor(descriptor);
+                }
+
             }
         }
     };
