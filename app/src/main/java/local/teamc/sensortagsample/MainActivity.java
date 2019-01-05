@@ -25,14 +25,25 @@ import java.util.UUID;
 
 import android.content.pm.PackageManager;
 
+import static java.lang.Math.pow;
+import java.util.TimerTask;
+import java.util.Timer;
+
 public class MainActivity extends AppCompatActivity {
 
     final UUID UUID_CLIENT_CHARACTERISTIC_CONFIG = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     final UUID UUID_KEY_SERV = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
     final UUID UUID_KEY_DATA = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
 
+    final UUID UUID_OPT_SERV = UUID.fromString("f000aa70-0451-4000-b000-000000000000");
+    final UUID UUID_OPT_DATA = UUID.fromString("f000aa71-0451-4000-b000-000000000000");
+    final UUID UUID_OPT_CONF = UUID.fromString("f000aa72-0451-4000-b000-000000000000"); // 0: disable, 1: enable
+    final UUID UUID_OPT_PERI = UUID.fromString("f000aa73-0451-4000-b000-000000000000"); // Period in tens of milliseconds
+    final UUID UUID_OPT_NTFY = UUID.fromString("f0002902-0451-4000-b000-000000000000"); // Notify
+
     TextView _textViewStatusValue;
     TextView _textViewButtonValue;
+    TextView _textViewOpticalValue;
     TextView[] _textViewHistory = new TextView[3];
     Handler _handler;
     BluetoothManager _bluetoothManager;
@@ -40,6 +51,8 @@ public class MainActivity extends AppCompatActivity {
     BluetoothLeScanner _bleScanner;
     BluetoothGatt _bluetoothGatt;
     boolean _bleDeviceConnected = false;
+
+    double opticalValue = 0;
 
     String[] _statusHistory = new String[3 + 1]; // 現在の状態+3履歴
     int _statusCurrentIndex = -1;
@@ -71,6 +84,7 @@ public class MainActivity extends AppCompatActivity {
 
         _textViewStatusValue = (TextView) findViewById(R.id.textview_status_value);
         _textViewButtonValue = (TextView) findViewById(R.id.textview_button_value);
+        _textViewOpticalValue = (TextView) findViewById(R.id.textview_optical_value);
         _textViewHistory[0] = (TextView) findViewById(R.id.textview_history1);
         _textViewHistory[1] = (TextView) findViewById(R.id.textview_history2);
         _textViewHistory[2] = (TextView) findViewById(R.id.textview_history3);
@@ -203,13 +217,13 @@ public class MainActivity extends AppCompatActivity {
             super.onConnectionStateChange(gatt, status, newState);
 
             // 接続成功
-            if (newState == BluetoothProfile.STATE_CONNECTED){
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
                 _bleDeviceConnected = true;
                 showStatus("接続成功");
 
                 discoverService(gatt);
 
-            }else if (newState == BluetoothProfile.STATE_DISCONNECTED){
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 _bleDeviceConnected = false;
                 showStatus("接続が切断されました");
             }
@@ -220,11 +234,11 @@ public class MainActivity extends AppCompatActivity {
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             super.onServicesDiscovered(gatt, status);
 
-            if(status == BluetoothGatt.GATT_SUCCESS) {
-                BluetoothGattService buttonService = gatt.getService(UUID_KEY_SERV);
-                if(buttonService != null){
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+/*                BluetoothGattService buttonService = gatt.getService(UUID_KEY_SERV);
+                if (buttonService != null) {
                     BluetoothGattCharacteristic buttonChar = buttonService.getCharacteristic(UUID_KEY_DATA);
-                    if(buttonChar != null){
+                    if (buttonChar != null) {
                         // Notification を要求する
                         boolean registered = gatt.setCharacteristicNotification(buttonChar, true);
                         // Characteristic の Notification 有効化
@@ -233,7 +247,23 @@ public class MainActivity extends AppCompatActivity {
                         gatt.writeDescriptor(descriptor);
                         showStatus("KeyのNotificationを有効にしました");
                     }
+                }*/
+                BluetoothGattService opticalService = gatt.getService(UUID_OPT_SERV);
+                if (opticalService != null) {
+                    BluetoothGattCharacteristic opticalConfChar = opticalService.getCharacteristic(UUID_OPT_CONF);
+                    if(opticalConfChar != null){
+                        byte[] val = new byte[1];
+                        val[0] = (byte)1;
+                        opticalConfChar.setValue(val);
+                        gatt.writeCharacteristic(opticalConfChar);
+                    }
                 }
+            }
+        }
+        @Override
+        public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status){
+            if(descriptor.getCharacteristic().getUuid().equals(UUID_KEY_DATA)){
+                showStatus("KeyのNotificationを有効にしました");
             }
         }
 
@@ -251,6 +281,68 @@ public class MainActivity extends AppCompatActivity {
                         _textViewButtonValue.setText("左:" + left + ", 右:" + right);
                     }
                 });
+            } else if(UUID_OPT_DATA.equals(characteristic.getUuid())){
+                byte[] value = characteristic.getValue();
+                Integer sfloat= shortUnsignedAtOffset(value, 0);
+
+                int mantissa;
+                int exponent;
+                mantissa = sfloat & 0x0FFF;
+                exponent = (sfloat >> 12) & 0xFF;
+
+                double output;
+                double magnitude = pow(2.0f, exponent);
+                output = (mantissa * magnitude);
+
+                opticalValue = output;
+                _handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        _textViewOpticalValue.setText((opticalValue/100.0f) +" lux");
+                    }
+                });
+            }
+
+        }
+
+        @Override
+        public void onCharacteristicRead(BluetoothGatt gatt,
+                                         BluetoothGattCharacteristic characteristic,
+                                         int status) {
+
+            BluetoothGattService opticalService = gatt.getService(UUID_OPT_SERV);
+            BluetoothGattCharacteristic opticalDataChar = opticalService.getCharacteristic(UUID_OPT_DATA);
+            if (opticalDataChar != null) {
+                gatt.readCharacteristic(opticalDataChar);
+            }
+        }
+
+        private Integer shortUnsignedAtOffset(byte[] c, int offset) {
+            Integer lowerByte = (int) c[offset] & 0xFF;
+            Integer upperByte = (int) c[offset+1] & 0xFF;
+            return (upperByte << 8) + lowerByte;
+        }
+
+        @Override
+        public void onCharacteristicWrite(BluetoothGatt gatt,
+                                          BluetoothGattCharacteristic characteristic,
+                                          int status)
+        {
+            if(characteristic.getUuid().equals(UUID_OPT_CONF)){
+                if(status == BluetoothGatt.GATT_SUCCESS){
+                    showStatus("Opticalを有効にしました");
+                }
+
+                // Notification を要求する
+                BluetoothGattService opticalService = gatt.getService(UUID_OPT_SERV);
+                BluetoothGattCharacteristic opticalDataChar = opticalService.getCharacteristic(UUID_OPT_DATA);
+                boolean registered = gatt.setCharacteristicNotification(opticalDataChar, true);
+                if(registered){
+                    // Characteristic の Notification 有効化
+                    BluetoothGattDescriptor descriptor = opticalDataChar.getDescriptor(UUID_CLIENT_CHARACTERISTIC_CONFIG);
+                    descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                    gatt.writeDescriptor(descriptor);
+                }
             }
         }
     };
