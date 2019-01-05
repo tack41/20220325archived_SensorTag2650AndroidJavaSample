@@ -26,8 +26,6 @@ import java.util.UUID;
 import android.content.pm.PackageManager;
 
 import static java.lang.Math.pow;
-import java.util.TimerTask;
-import java.util.Timer;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -48,7 +46,9 @@ public class MainActivity extends AppCompatActivity {
     TextView _textViewStatusValue;
     TextView _textViewButtonValue;
     TextView _textViewOpticalValue;
-    TextView _textViewMovementValue;
+    TextView _textViewAccValue;
+    TextView _textViewGyroValue;
+    TextView _textViewMagValue;
     TextView[] _textViewHistory = new TextView[3];
     Handler _handler;
     BluetoothManager _bluetoothManager;
@@ -58,7 +58,7 @@ public class MainActivity extends AppCompatActivity {
     boolean _bleDeviceConnected = false;
 
     double opticalValue = 0;
-    double accX,accY,accZ;
+    double accX,accY,accZ,gyroX,gyroY,gyroZ,magX,magY,magZ;
 
 
     String[] _statusHistory = new String[3 + 1]; // 現在の状態+3履歴
@@ -92,7 +92,9 @@ public class MainActivity extends AppCompatActivity {
         _textViewStatusValue = (TextView) findViewById(R.id.textview_status_value);
         _textViewButtonValue = (TextView) findViewById(R.id.textview_button_value);
         _textViewOpticalValue = (TextView) findViewById(R.id.textview_optical_value);
-        _textViewMovementValue = (TextView) findViewById(R.id.textview_movement_value);
+        _textViewAccValue = (TextView) findViewById(R.id.textview_acc_value);
+        _textViewGyroValue = (TextView) findViewById(R.id.textview_gyro_value);
+        _textViewMagValue = (TextView) findViewById(R.id.textview_mag_value);
         _textViewHistory[0] = (TextView) findViewById(R.id.textview_history1);
         _textViewHistory[1] = (TextView) findViewById(R.id.textview_history2);
         _textViewHistory[2] = (TextView) findViewById(R.id.textview_history3);
@@ -337,7 +339,38 @@ public class MainActivity extends AppCompatActivity {
                     _handler.post(new Runnable() {
                         @Override
                         public void run() {
-                            _textViewMovementValue.setText(String.format("accX:%.3f, accY:%.3f, accZ:%.3f",accX,accY,accZ));
+                            _textViewAccValue.setText(String.format("accX:%.3f, accY:%.3f, accZ:%.3f",accX,accY,accZ));
+                        }
+                    });
+                }
+                {
+                    final float SCALE = (float) 128.0;
+
+                    gyroX = ((value[1]<<8) + value[0])/SCALE;
+                    gyroY = ((value[3]<<8) + value[2])/SCALE;
+                    gyroZ = ((value[5]<<8) + value[4])/SCALE;
+                    _handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            _textViewGyroValue.setText(String.format("gyroX:%.3f, gyroY:%.3f, gyroZ:%.3f",gyroX,gyroY,gyroZ));
+                        }
+                    });
+                }
+                {
+                    final float SCALE = (float) (32768 / 4912);
+                    if (value.length >= 18) {
+                        magX = ((value[13]<<8) + value[12])/SCALE;
+                        magY = ((value[15]<<8) + value[14])/SCALE;
+                        magZ = ((value[17]<<8) + value[16])/SCALE;
+                    }else{
+                        magX = 0;
+                        magY = 0;
+                        magZ = 0;
+                    }
+                    _handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            _textViewMagValue.setText(String.format("magX:%.3f, magY:%.3f, magZ:%.3f",magX,magY,magZ));
                         }
                     });
                 }
