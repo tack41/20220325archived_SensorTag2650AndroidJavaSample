@@ -17,6 +17,8 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothProfile;
+
+import java.nio.ByteBuffer;
 import java.util.Date;
 import java.util.List;
 import android.Manifest;
@@ -43,12 +45,19 @@ public class MainActivity extends AppCompatActivity {
     final UUID UUID_MOV_CONF = UUID.fromString("f000aa82-0451-4000-b000-000000000000"); // 0: disable, bit 0: enable x, bit 1: enable y, bit 2: enable z
     final UUID UUID_MOV_PERI = UUID.fromString("f000aa83-0451-4000-b000-000000000000"); // Period in tens of milliseconds
 
+    final UUID UUID_BAR_SERV = UUID.fromString("f000aa40-0451-4000-b000-000000000000");
+    final UUID UUID_BAR_DATA = UUID.fromString("f000aa41-0451-4000-b000-000000000000");
+    final UUID UUID_BAR_CONF = UUID.fromString("f000aa42-0451-4000-b000-000000000000"); // 0: disable, 1: enable
+    final UUID UUID_BAR_CALI = UUID.fromString("f000aa43-0451-4000-b000-000000000000"); // Calibration characteristic
+    final UUID UUID_BAR_PERI = UUID.fromString("f000aa44-0451-4000-b000-000000000000"); // Period in tens of milliseconds
+
     TextView _textViewStatusValue;
     TextView _textViewButtonValue;
     TextView _textViewOpticalValue;
     TextView _textViewAccValue;
     TextView _textViewGyroValue;
     TextView _textViewMagValue;
+    TextView _textViewBarometerValue;
     TextView[] _textViewHistory = new TextView[3];
     Handler _handler;
     BluetoothManager _bluetoothManager;
@@ -59,7 +68,7 @@ public class MainActivity extends AppCompatActivity {
 
     double opticalValue = 0;
     double accX,accY,accZ,gyroX,gyroY,gyroZ,magX,magY,magZ;
-
+    double temperature, barometer;
 
     String[] _statusHistory = new String[3 + 1]; // 現在の状態+3履歴
     int _statusCurrentIndex = -1;
@@ -95,6 +104,7 @@ public class MainActivity extends AppCompatActivity {
         _textViewAccValue = (TextView) findViewById(R.id.textview_acc_value);
         _textViewGyroValue = (TextView) findViewById(R.id.textview_gyro_value);
         _textViewMagValue = (TextView) findViewById(R.id.textview_mag_value);
+        _textViewBarometerValue = (TextView) findViewById(R.id.textview_barometer_value);
         _textViewHistory[0] = (TextView) findViewById(R.id.textview_history1);
         _textViewHistory[1] = (TextView) findViewById(R.id.textview_history2);
         _textViewHistory[2] = (TextView) findViewById(R.id.textview_history3);
@@ -245,7 +255,7 @@ public class MainActivity extends AppCompatActivity {
             super.onServicesDiscovered(gatt, status);
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
-/*                BluetoothGattService buttonService = gatt.getService(UUID_KEY_SERV);
+                BluetoothGattService buttonService = gatt.getService(UUID_KEY_SERV);
                 if (buttonService != null) {
                     BluetoothGattCharacteristic buttonChar = buttonService.getCharacteristic(UUID_KEY_DATA);
                     if (buttonChar != null) {
@@ -257,16 +267,6 @@ public class MainActivity extends AppCompatActivity {
                         gatt.writeDescriptor(descriptor);
                         showStatus("KeyのNotificationを有効にしました");
                     }
-                }*/
-                BluetoothGattService opticalService = gatt.getService(UUID_OPT_SERV);
-                if (opticalService != null) {
-                    BluetoothGattCharacteristic opticalConfChar = opticalService.getCharacteristic(UUID_OPT_CONF);
-                    if(opticalConfChar != null){
-                        byte[] val = new byte[1];
-                        val[0] = (byte)1;
-                        opticalConfChar.setValue(val);
-                        gatt.writeCharacteristic(opticalConfChar);
-                    }
                 }
             }
         }
@@ -274,6 +274,17 @@ public class MainActivity extends AppCompatActivity {
         public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status){
             if(descriptor.getCharacteristic().getUuid().equals(UUID_KEY_DATA)){
                 showStatus("KeyのNotificationを有効にしました");
+
+                showStatus("Opticalを有効にします");
+                BluetoothGattService opticalService = gatt.getService(UUID_OPT_SERV);
+                if (opticalService != null) {
+                    BluetoothGattCharacteristic opticalConfChar = opticalService.getCharacteristic(UUID_OPT_CONF);
+                    if(opticalConfChar != null){
+                        byte[] val = new byte[]{(byte)0x01};
+                        opticalConfChar.setValue(val);
+                        gatt.writeCharacteristic(opticalConfChar);
+                    }
+                }
             }else if(descriptor.getCharacteristic().getUuid().equals(UUID_OPT_DATA)){
                 showStatus("OpticalのNotificationを有効にしました");
 
@@ -289,6 +300,21 @@ public class MainActivity extends AppCompatActivity {
                 }
             }else if(descriptor.getCharacteristic().getUuid().equals(UUID_MOV_DATA)){
                 showStatus("MovementのNoticationを有効にしました");
+
+                BluetoothGattService barometerService = gatt.getService(UUID_BAR_SERV);
+                if (barometerService != null) {
+                    showStatus("Barometerを有効にします");
+
+                    BluetoothGattCharacteristic barometerConfChar = barometerService.getCharacteristic(UUID_BAR_CONF);
+                    if(barometerConfChar != null){
+                        byte[] val = new byte[]{(byte)0x01};
+                        barometerConfChar.setValue(val);
+                        gatt.writeCharacteristic(barometerConfChar);
+                    }
+                }
+            }else if (descriptor.getCharacteristic().getUuid().equals(UUID_BAR_DATA)){
+                showStatus("Barometer(+Temperature)のNoticationを有効にしました");
+
             }
         }
 
@@ -374,20 +400,44 @@ public class MainActivity extends AppCompatActivity {
                         }
                     });
                 }
+            }else if(UUID_BAR_DATA.equals(characteristic.getUuid())){
+                byte[] value = characteristic.getValue();
+
+                barometer = ByteBuffer.wrap(new byte[]{(byte)0x00,value[5],value[4],value[3]}).getInt() / 100.0f;
+
+                _handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        _textViewBarometerValue.setText("bar:" + barometer);
+                    }
+                });
             }
 
         }
 
         @Override
         public void onCharacteristicRead(BluetoothGatt gatt,
-                                         BluetoothGattCharacteristic characteristic,
+                                         final BluetoothGattCharacteristic characteristic,
                                          int status) {
+            _handler.post(new Runnable() {
+                @Override
+                public void run() {
+                    _textViewBarometerValue.setText("calib:" + characteristic.getValue());
+                }
+            });
         }
 
         private Integer shortUnsignedAtOffset(byte[] c, int offset) {
             Integer lowerByte = (int) c[offset] & 0xFF;
             Integer upperByte = (int) c[offset+1] & 0xFF;
             return (upperByte << 8) + lowerByte;
+        }
+
+        private Integer twentyFourBitUnsignedAtOffset(byte[] c, int offset) {
+            Integer lowerByte = (int) c[offset] & 0xFF;
+            Integer mediumByte = (int) c[offset+1] & 0xFF;
+            Integer upperByte = (int) c[offset + 2] & 0xFF;
+            return (upperByte << 16) + (mediumByte << 8) + lowerByte;
         }
 
         @Override
@@ -423,7 +473,19 @@ public class MainActivity extends AppCompatActivity {
                     descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                     gatt.writeDescriptor(descriptor);
                 }
+            }else if(characteristic.getUuid().equals(UUID_BAR_CONF)){
+                showStatus("Barometerを有効化しました");
 
+                // Notification を要求する
+                BluetoothGattService barometerService = gatt.getService(UUID_BAR_SERV);
+                BluetoothGattCharacteristic barometerDataChar = barometerService.getCharacteristic(UUID_BAR_DATA);
+                boolean registered = gatt.setCharacteristicNotification(barometerDataChar, true);
+                if(registered){
+                    // Characteristic の Notification 有効化
+                    BluetoothGattDescriptor descriptor = barometerDataChar.getDescriptor(UUID_CLIENT_CHARACTERISTIC_CONFIG);
+                    descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                    gatt.writeDescriptor(descriptor);
+                }
             }
         }
     };
